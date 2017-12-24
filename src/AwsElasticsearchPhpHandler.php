@@ -27,7 +27,7 @@ class AwsElasticsearchPhpHandler
     }
 
     /**
-     * Returns handler-
+     * Returns handler.
      *
      * @param array $request
      * @return \Closure
@@ -35,35 +35,30 @@ class AwsElasticsearchPhpHandler
     public function __invoke(array $request)
     {
         $psr7Handler = \Aws\default_http_handler();
+        $request['headers']['Host'][0] = parse_url($request['headers']['Host'][0])['host'];
 
-        return function (array $request) use ($psr7Handler) {
-            // Amazon ES listens on standard ports (443 for HTTPS, 80 for HTTP).
-            $request['headers']['Host'][0] = parse_url($request['headers']['Host'][0])['host'];
+        $psr7Request = new \GuzzleHttp\Psr7\Request(
+            $request['http_method'],
+            (new \GuzzleHttp\Psr7\Uri($request['uri']))
+                ->withScheme($request['scheme'])
+                ->withHost($request['headers']['Host'][0]),
+            $request['headers'],
+            $request['body']
+        );
 
-            // Create a PSR-7 request from the array passed to the handler
-            $psr7Request = new \GuzzleHttp\Psr7\Request(
-                $request['http_method'],
-                (new \GuzzleHttp\Psr7\Uri($request['uri']))
-                    ->withScheme($request['scheme'])
-                    ->withHost($request['headers']['Host'][0]),
-                $request['headers'],
-                $request['body']
-            );
+        $signedRequest = $this->signature->signRequest(
+            $psr7Request,
+            call_user_func($this->credentialProvider)->wait()
+        );
 
-            $signedRequest = $this->signer->signRequest(
-                $psr7Request,
-                call_user_func($this->credentialProvider)->wait()
-            );
+        $response = $psr7Handler($signedRequest)->wait();
 
-            $response = $psr7Handler($signedRequest)->wait();
-
-            return new \GuzzleHttp\Ring\Future\CompletedFutureArray([
-                'status' => $response->getStatusCode(),
-                'headers' => $response->getHeaders(),
-                'body' => $response->getBody()->detach(),
-                'transfer_stats' => ['total_time' => 0],
-                'effective_url' => (string)$psr7Request->getUri(),
-            ]);
-        };
+        return new \GuzzleHttp\Ring\Future\CompletedFutureArray([
+            'status' => $response->getStatusCode(),
+            'headers' => $response->getHeaders(),
+            'body' => $response->getBody()->detach(),
+            'transfer_stats' => ['total_time' => 0],
+            'effective_url' => (string)$psr7Request->getUri(),
+        ]);
     }
 }
