@@ -1,88 +1,69 @@
 <?php
-namespace Aws\ElasticsearchService;
-use Aws\Credentials\CredentialProvider;
+namespace Fabschtr\AwsElasticSearchPHPHandler;
+
+
 use Aws\Signature\SignatureV4;
-use Elasticsearch\ClientBuilder;
-use GuzzleHttp\Psr7\Request;
-use GuzzleHttp\Psr7\Uri;
-use Psr\Http\Message\RequestInterface;
+
 
 class AwsElasticsearchPhpHandler
 {
-    private $signer;
+    private $signature;
     private $credentialProvider;
-    private $wrappedHandler;
+
     /**
-     * An AWS Signature V4 signing handler for use with Elasticsearch-PHP and
-     * Amazon Elasticsearch Service.
+     * Set AWS credentials and region.
      *
-     * @param string        $region                 The region of your Amazon
-     *                                              Elasticsearch Service domain
-     * @param callable|null $credentialProvider     A callable that returns a
-     *                                              promise that is fulfilled
-     *                                              with an instance of
-     *                                              Aws\Credentials\Credentials
-     * @param callable|null $wrappedHandler         A RingPHP handler
+     * AwsElasticsearchPhpHandler constructor.
+     * @param $key
+     * @param $secret
+     * @param $region
      */
-    public function __construct(
-        $region,
-        callable $credentialProvider = null,
-        callable $wrappedHandler = null
-    ) {
-        $this->signer = new SignatureV4('es', $region);
-        $this->wrappedHandler = $wrappedHandler
-            ?: ClientBuilder::defaultHandler();
-        $this->credentialProvider = $credentialProvider
-            ?: CredentialProvider::defaultProvider();
+    public function __construct($key, $secret, $region)
+    {
+        $this->credentialProvider = \Aws\Credentials\CredentialProvider::fromCredentials(
+            new \Aws\Credentials\Credentials($key, $secret)
+        );
+        $this->signature = new SignatureV4('es', $region);
     }
+
+    /**
+     * Returns handler-
+     *
+     * @param array $request
+     * @return \Closure
+     */
     public function __invoke(array $request)
     {
-        $creds = call_user_func($this->credentialProvider)->wait();
-        $psr7Request = $this->createPsr7Request($request);
-        $signedRequest = $this->signer
-            ->signRequest($psr7Request, $creds);
-        return call_user_func($this->wrappedHandler, array_replace(
-            $request,
-            $this->createRingRequest($signedRequest)
-        ));
-    }
-    private function createPsr7Request(array $ringPhpRequest)
-    {
-        // fix for uppercase 'Host' array key in elasticsearch-php 5.3.1 and backward compatible
-        // https://github.com/aws/aws-sdk-php/issues/1225
-        $hostKey = isset($ringPhpRequest['headers']['Host'])? 'Host' : 'host';
-        // Amazon ES listens on standard ports (443 for HTTPS, 80 for HTTP).
-        // Consequently, the port should be stripped from the host header.
-        $ringPhpRequest['headers'][$hostKey][0]
-            = parse_url($ringPhpRequest['headers'][$hostKey][0])['host'];
-        // Create a PSR-7 URI from the array passed to the handler
-        $uri = (new Uri($ringPhpRequest['uri']))
-            ->withScheme($ringPhpRequest['scheme'])
-            ->withHost($ringPhpRequest['headers'][$hostKey][0]);
-        if (isset($ringPhpRequest['query_string'])) {
-            $uri = $uri->withQuery($ringPhpRequest['query_string']);
-        }
-        // Create a PSR-7 request from the array passed to the handler
-        return new Request(
-            $ringPhpRequest['http_method'],
-            $uri,
-            $ringPhpRequest['headers'],
-            $ringPhpRequest['body']
-        );
-    }
-    private function createRingRequest(RequestInterface $request)
-    {
-        $uri = $request->getUri();
-        $ringRequest = [
-            'http_method' => $request->getMethod(),
-            'scheme' => $uri->getScheme(),
-            'uri' => $uri->getPath(),
-            'body' => (string) $request->getBody(),
-            'headers' => $request->getHeaders(),
-        ];
-        if ($uri->getQuery()) {
-            $ringRequest['query_string'] = $uri->getQuery();
-        }
-        return $ringRequest;
+        $psr7Handler = \Aws\default_http_handler();
+
+        return function (array $request) use ($psr7Handler) {
+            // Amazon ES listens on standard ports (443 for HTTPS, 80 for HTTP).
+            $request['headers']['Host'][0] = parse_url($request['headers']['Host'][0])['host'];
+
+            // Create a PSR-7 request from the array passed to the handler
+            $psr7Request = new \GuzzleHttp\Psr7\Request(
+                $request['http_method'],
+                (new \GuzzleHttp\Psr7\Uri($request['uri']))
+                    ->withScheme($request['scheme'])
+                    ->withHost($request['headers']['Host'][0]),
+                $request['headers'],
+                $request['body']
+            );
+
+            $signedRequest = $this->signer->signRequest(
+                $psr7Request,
+                call_user_func($this->credentialProvider)->wait()
+            );
+
+            $response = $psr7Handler($signedRequest)->wait();
+
+            return new \GuzzleHttp\Ring\Future\CompletedFutureArray([
+                'status' => $response->getStatusCode(),
+                'headers' => $response->getHeaders(),
+                'body' => $response->getBody()->detach(),
+                'transfer_stats' => ['total_time' => 0],
+                'effective_url' => (string)$psr7Request->getUri(),
+            ]);
+        };
     }
 }

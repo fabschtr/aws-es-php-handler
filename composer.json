@@ -1,8 +1,7 @@
 {
   "name": "fabschtr/aws-es-php-handler",
-  "description": "Support for using IAM authentication with the official Elasticsearch PHP client",
+  "description": "AWS signing handler for the Elasticsearch-PHP client.",
   "keywords": ["elasticsearch", "aws", "search", "client", "iam"],
-  "minimum-stability": "stable",
   "license": "Apache-2.0",
   "authors": [
     {
