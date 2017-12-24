@@ -27,7 +27,7 @@ class AwsElasticsearchPhpHandler
     }
 
     /**
-     * Returns handler.
+     * Returns handler
      *
      * @param array $request
      * @return \Closure
@@ -51,7 +51,16 @@ class AwsElasticsearchPhpHandler
             call_user_func($this->credentialProvider)->wait()
         );
 
-        $response = $psr7Handler($signedRequest)->wait();
+        $response = $psr7Handler($signedRequest)->then(
+            function (\Psr\Http\Message\ResponseInterface $oResponse)
+            {
+                return $oResponse;
+            },
+            function ($aError)
+            {
+                return $aError['response'];
+            }
+        )->wait();
 
         return new \GuzzleHttp\Ring\Future\CompletedFutureArray([
             'status' => $response->getStatusCode(),
