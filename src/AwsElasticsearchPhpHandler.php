@@ -1,5 +1,5 @@
 <?php
-namespace Fabschtr\AwsElasticSearchPHPHandler;
+namespace Fabschtr\AwsEsPhpHandler;
 
 
 use Aws\Signature\SignatureV4;
